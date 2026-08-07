@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDownUp,
   ArrowLeft,
+  Camera,
+  CameraOff,
   Copy,
   Download,
   Hash,
@@ -22,6 +25,7 @@ import {
   generateGroupsBySize,
   generateGroupsAvoidingRepeats,
   buildPairHistorySet,
+  reorderEmptyGroupsLast,
   resolveConstraints,
   findViolationPairs,
 } from "../lib/grouping.js";
@@ -49,6 +53,7 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [noteInput, setNoteInput] = useState("");
   const [savingHistory, setSavingHistory] = useState(false);
+  const [photoMode, setPhotoMode] = useState(false);
 
   function update(fn) {
     onUpdate(c.id, fn);
@@ -235,6 +240,18 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
     }
   }
 
+  function handleReorganize() {
+    const hasEmpty = c.groups.some((g) => g.length === 0);
+    const hasNonEmpty = c.groups.some((g) => g.length > 0);
+    if (!hasEmpty || !hasNonEmpty) {
+      showToast("No hay grupos vacíos para reordenar");
+      return;
+    }
+    update((cc) => ({ ...cc, groups: reorderEmptyGroupsLast(cc.groups) }));
+    setSelectedChip(null);
+    showToast("Grupos reordenados");
+  }
+
   function handleResetCourse() {
     if (
       !window.confirm(
@@ -378,14 +395,34 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
       </div>
 
       <div className="fwd-header">
-        <button className="back-link no-print" onClick={onBack}>
-          <ArrowLeft size={14} /> Volver a grupos
-        </button>
-        <p className="fwd-kicker">{c.label}</p>
-        <h1 className="fwd-title">Generador de Grupos</h1>
+        {!photoMode && (
+          <button className="back-link no-print" onClick={onBack}>
+            <ArrowLeft size={14} /> Volver a grupos
+          </button>
+        )}
+        <div className="fwd-header-row">
+          <div>
+            <p className="fwd-kicker">{c.label}</p>
+            <h1 className="fwd-title">Generador de Grupos</h1>
+          </div>
+          <button
+            className={`btn ${photoMode ? "btn-purple" : "btn-outline"} no-print photo-mode-toggle`}
+            onClick={() => setPhotoMode((v) => !v)}
+          >
+            {photoMode ? (
+              <>
+                <CameraOff size={15} /> Salir de modo foto
+              </>
+            ) : (
+              <>
+                <Camera size={15} /> Modo foto
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
-      <div className="fwd-panel no-print">
+      {!photoMode && <div className="fwd-panel no-print">
         <div className="fwd-card">
           <h2>Lista de estudiantes ({c.students.length})</h2>
           <div className="fwd-field">
@@ -571,17 +608,19 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
           onRestore={handleRestoreHistory}
           onDelete={handleDeleteHistory}
         />
-      </div>
+      </div>}
 
-      <div className="results-header">
-        <h2>Resultado</h2>
-        <span className="meta">
-          {c.groups.length} grupo{c.groups.length !== 1 ? "s" : ""} ·{" "}
-          {unassigned.length > 0 ? `${unassigned.length} sin asignar` : "todos asignados"}
-        </span>
-      </div>
+      {!photoMode && (
+        <div className="results-header">
+          <h2>Resultado</h2>
+          <span className="meta">
+            {c.groups.length} grupo{c.groups.length !== 1 ? "s" : ""} ·{" "}
+            {unassigned.length > 0 ? `${unassigned.length} sin asignar` : "todos asignados"}
+          </span>
+        </div>
+      )}
 
-      {liveViolations.length > 0 && (
+      {!photoMode && liveViolations.length > 0 && (
         <div className="warn-banner">
           <ShieldAlert size={16} />
           <span>
@@ -617,21 +656,24 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
           />
         ))}
 
-        <GroupCard
-          title="Sin asignar"
-          members={unassigned}
-          isPool
-          isDragOver={dragOverTarget === "pool"}
-          onDragOver={() => setDragOverTarget("pool")}
-          onDragLeave={() => setDragOverTarget((t) => (t === "pool" ? null : t))}
-          onDrop={(e) => handleDrop(e, "pool")}
-          onCardClick={() => handleCardClick("pool")}
-          onDragStartChip={(name) => (dragInfoRef.current = { name, from: "pool" })}
-          onToggleSelectChip={(name) => toggleSelect(name, "pool")}
-          isChipSelected={(name) => !!(selectedChip && selectedChip.name === name && selectedChip.from === "pool")}
-        />
+        {!photoMode && (
+          <GroupCard
+            title="Sin asignar"
+            members={unassigned}
+            isPool
+            isDragOver={dragOverTarget === "pool"}
+            onDragOver={() => setDragOverTarget("pool")}
+            onDragLeave={() => setDragOverTarget((t) => (t === "pool" ? null : t))}
+            onDrop={(e) => handleDrop(e, "pool")}
+            onCardClick={() => handleCardClick("pool")}
+            onDragStartChip={(name) => (dragInfoRef.current = { name, from: "pool" })}
+            onToggleSelectChip={(name) => toggleSelect(name, "pool")}
+            isChipSelected={(name) => !!(selectedChip && selectedChip.name === name && selectedChip.from === "pool")}
+          />
+        )}
       </div>
 
+      {!photoMode && (
       <div className="toolbar no-print">
         <input
           className="fwd-input history-note-input"
@@ -651,10 +693,21 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
         <button className="btn btn-outline" onClick={handleCopy}>
           <Copy size={15} /> Copiar
         </button>
+        <button
+          className="btn btn-outline"
+          onClick={handleReorganize}
+          title="Renumera las tarjetas: los grupos vacíos pasan al final, sin mover a nadie"
+        >
+          <ArrowDownUp size={15} /> Reorganizar
+        </button>
+        <button className="btn btn-outline" onClick={() => setPhotoMode((v) => !v)}>
+          <Camera size={15} /> Modo foto
+        </button>
         <button className="btn btn-outline" onClick={handleResetCourse} style={{ marginLeft: "auto" }}>
           <RotateCcw size={15} /> Reiniciar configuración
         </button>
       </div>
+      )}
     </>
   );
 }
