@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Copy,
@@ -9,18 +9,31 @@ import {
   Printer,
   RotateCcw,
   Rows,
+  Save,
   Shuffle,
   ShieldAlert,
   X,
 } from "lucide-react";
 import GroupCard from "./GroupCard.jsx";
 import ConstraintsPanel from "./ConstraintsPanel.jsx";
+import HistoryPanel from "./HistoryPanel.jsx";
 import {
   generateGroupsByCount,
   generateGroupsBySize,
+  generateGroupsAvoidingRepeats,
+  buildPairHistorySet,
   resolveConstraints,
   findViolationPairs,
 } from "../lib/grouping.js";
+import {
+  isSupabaseConfigured,
+  loadLocalHistory,
+  saveLocalHistoryEntry,
+  deleteLocalHistoryEntry,
+  fetchRemoteHistory,
+  insertRemoteHistory,
+  deleteRemoteHistory,
+} from "../lib/history.js";
 
 const HEADER_COLORS = ["#5B3A8E", "#1F8A8A"];
 
@@ -32,8 +45,96 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
   const [dragOverTarget, setDragOverTarget] = useState(null);
   const dragInfoRef = useRef(null);
 
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [noteInput, setNoteInput] = useState("");
+  const [savingHistory, setSavingHistory] = useState(false);
+
   function update(fn) {
     onUpdate(c.id, fn);
+  }
+
+  // ---------- Historial ----------
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadHistory() {
+      setHistoryLoading(true);
+      if (isSupabaseConfigured) {
+        try {
+          const remote = await fetchRemoteHistory(c.id);
+          if (!cancelled) setHistory(remote);
+        } catch (e) {
+          console.error("[history] Error cargando desde Supabase, usando local", e);
+          if (!cancelled) setHistory(loadLocalHistory(c.id));
+        }
+      } else {
+        setHistory(loadLocalHistory(c.id));
+      }
+      if (!cancelled) setHistoryLoading(false);
+    }
+
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [c.id]);
+
+  const pairHistorySet = useMemo(() => buildPairHistorySet(history), [history]);
+
+  async function handleSaveToHistory() {
+    if (!c.groups.some((g) => g.length > 0)) {
+      showToast("No hay grupos generados para guardar");
+      return;
+    }
+    const entry = {
+      courseId: c.id,
+      label: c.label,
+      note: noteInput.trim() || null,
+      mode: c.mode,
+      sizeMode: c.sizeMode,
+      numGroups: c.numGroups,
+      groupSize: c.groupSize,
+      groups: c.groups,
+    };
+    setSavingHistory(true);
+    try {
+      const saved = isSupabaseConfigured
+        ? await insertRemoteHistory(entry)
+        : saveLocalHistoryEntry(c.id, entry);
+      setHistory((prev) => [saved, ...prev]);
+      setNoteInput("");
+      showToast("Sesión guardada en el historial");
+    } catch (e) {
+      console.error("[history] Error guardando", e);
+      // Si falla lo remoto, al menos se guarda localmente para no perder el registro.
+      const fallback = saveLocalHistoryEntry(c.id, entry);
+      setHistory((prev) => [fallback, ...prev]);
+      showToast("No se pudo guardar en Supabase, se guardó localmente");
+    } finally {
+      setSavingHistory(false);
+    }
+  }
+
+  function handleRestoreHistory(entry) {
+    update((cc) => ({ ...cc, groups: entry.groups.map((g) => [...g]) }));
+    setSelectedChip(null);
+    showToast("Agrupación restaurada desde el historial");
+  }
+
+  async function handleDeleteHistory(id) {
+    if (!window.confirm("¿Eliminar esta entrada del historial?")) return;
+    setHistory((prev) => prev.filter((e) => e.id !== id));
+    if (isSupabaseConfigured) {
+      try {
+        await deleteRemoteHistory(id);
+      } catch (e) {
+        console.error("[history] Error eliminando en Supabase", e);
+        showToast("No se pudo eliminar en Supabase");
+      }
+    } else {
+      deleteLocalHistoryEntry(c.id, id);
+    }
   }
 
   // ---------- Roster ----------
@@ -93,16 +194,41 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
 
   // ---------- Generate / reset ----------
   function handleGenerate() {
-    const base =
-      c.sizeMode === "size"
-        ? generateGroupsBySize(c.students, c.groupSize, c.mode)
-        : generateGroupsByCount(c.students, c.numGroups, c.mode);
-    const { groups: resolved, unresolved } = resolveConstraints(base, c.constraints);
+    let resolved, unresolved, repeatCount = 0;
+
+    if (c.mode === "aleatorio" && pairHistorySet.size > 0) {
+      // Hay sesiones guardadas: probamos varias combinaciones y elegimos la
+      // que menos repita parejas de esas sesiones (ver grouping.js).
+      const result = generateGroupsAvoidingRepeats({
+        students: c.students,
+        sizeMode: c.sizeMode,
+        numGroups: c.numGroups,
+        groupSize: c.groupSize,
+        constraints: c.constraints,
+        pairHistorySet,
+      });
+      resolved = result.groups;
+      unresolved = result.unresolved;
+      repeatCount = result.repeatCount;
+    } else {
+      const base =
+        c.sizeMode === "size"
+          ? generateGroupsBySize(c.students, c.groupSize, c.mode)
+          : generateGroupsByCount(c.students, c.numGroups, c.mode);
+      const r = resolveConstraints(base, c.constraints);
+      resolved = r.groups;
+      unresolved = r.unresolved;
+    }
+
     update((cc) => ({ ...cc, groups: resolved }));
     setSelectedChip(null);
     if (unresolved.length > 0) {
       showToast(
         `Grupos generados — no se pudieron separar ${unresolved.length} restricción(es) con esta configuración`
+      );
+    } else if (repeatCount > 0) {
+      showToast(
+        `Grupos generados — quedaron ${repeatCount} pareja(s) que ya estuvieron juntas antes (no se pudo evitar del todo)`
       );
     } else {
       showToast("Grupos generados");
@@ -438,6 +564,13 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
           onAdd={addConstraint}
           onRemove={removeConstraint}
         />
+
+        <HistoryPanel
+          entries={history}
+          loading={historyLoading}
+          onRestore={handleRestoreHistory}
+          onDelete={handleDeleteHistory}
+        />
       </div>
 
       <div className="results-header">
@@ -500,6 +633,15 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
       </div>
 
       <div className="toolbar no-print">
+        <input
+          className="fwd-input history-note-input"
+          placeholder="Nota para el historial (opcional)"
+          value={noteInput}
+          onChange={(e) => setNoteInput(e.target.value)}
+        />
+        <button className="btn btn-purple" onClick={handleSaveToHistory} disabled={savingHistory}>
+          <Save size={15} /> Guardar en historial
+        </button>
         <button className="btn btn-outline" onClick={handlePrint}>
           <Printer size={15} /> Imprimir
         </button>

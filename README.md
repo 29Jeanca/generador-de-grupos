@@ -61,9 +61,11 @@ src/
   lib/
     grouping.js                Algoritmos de reparto y resolución de restricciones
     storage.js                  Guardar/leer localStorage
+    supabaseClient.js           Cliente de Supabase (ver sección "Supabase" abajo)
     defaultCourses.js           Datos iniciales (Desamparados y Puntarenas)
   styles/
     global.css                  Sistema de diseño institucional FWD
+.env.example                    Plantilla de variables de entorno de Supabase
 ```
 
 ## Funcionalidades
@@ -82,6 +84,52 @@ src/
 - **Exportar**: imprimir, descargar como `.txt`, o copiar al portapapeles.
 - **Persistente**: todo (lista, configuración, grupos armados, restricciones) se guarda
   automáticamente en el navegador.
+
+## Supabase
+
+La app puede guardar los cursos en [Supabase](https://supabase.com) en vez de (o además de)
+`localStorage`, para que los datos persistan entre navegadores/dispositivos. Mientras no haya
+credenciales configuradas, sigue funcionando 100% local como antes — no hace falta Supabase
+para usar la app.
+
+### 1. Crear la tabla
+
+En el dashboard de tu proyecto → **SQL Editor → New query**, pegá y ejecutá el contenido de
+[`db/schema.sql`](db/schema.sql). Esto crea la tabla `courses` (cada curso se guarda completo
+como un bloque JSON, igual que en `localStorage`) y sus políticas de acceso.
+
+> Nota de seguridad: como la app no tiene pantalla de login, usa la *anon key* directo desde
+> el navegador con políticas abiertas — cualquiera con esa key (pública, queda en el bundle)
+> puede leer y escribir. Está bien para uso personal/interno; si esto se comparte más
+> ampliamente, hay que agregar Supabase Auth y ajustar las políticas en `db/schema.sql`.
+
+### 2. Configurar las credenciales
+
+1. Copiá `.env.example` a `.env.local`.
+2. En **Project Settings → API** copiá:
+   - **Project URL** → `VITE_SUPABASE_URL`.
+   - **anon public key** → `VITE_SUPABASE_ANON_KEY`.
+3. Reiniciá `npm run dev`.
+
+### 3. Verificar que quedó conectado
+
+Con el server corriendo, abrí la consola del navegador: si falta alguna variable vas a ver un
+`console.warn` de `[supabase]`. Si no aparece nada, creá o editá un grupo y revisá en
+**Table Editor → courses** del dashboard que la fila aparezca/actualice.
+
+### Cómo funciona
+
+- `src/lib/supabaseClient.js`: crea el cliente. Expone `supabase` (o `null` si faltan
+  credenciales) y `isSupabaseConfigured`.
+- `src/lib/storage.js`: si `isSupabaseConfigured` es `true`, `App.jsx` lee/escribe los cursos
+  en Supabase (con una copia de respaldo en `localStorage` por si se pierde la conexión); si es
+  `false`, usa solo `localStorage` como hasta ahora. El curso seleccionado (a qué pantalla
+  volver) siempre vive en `localStorage`, sea cual sea el modo.
+- La primera vez que se conecta a un proyecto de Supabase vacío, la app siembra
+  automáticamente los cursos por defecto (Desamparados y Puntarenas).
+
+`.env.local` está en `.gitignore`, así que las credenciales reales nunca se suben al
+repositorio; solo `.env.example` (vacío) queda versionado como referencia.
 
 ## Cambiar la paleta de colores o la tipografía
 
