@@ -377,7 +377,7 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
   const ng = Math.max(c.numGroups, 1);
   const minSize = total ? Math.floor(total / ng) : 0;
   const maxSize = total ? Math.ceil(total / ng) : 0;
-  const sizeModeGroupsComputed = total ? Math.ceil(total / Math.max(c.groupSize, 2)) : 0;
+  const sizeModeGroupsComputed = total ? Math.ceil(total / Math.max(c.groupSize, 1)) : 0;
 
   function isChipConflicting(name, groupIdx) {
     const members = c.groups[groupIdx];
@@ -533,29 +533,28 @@ export default function CourseEditor({ course, onBack, onUpdate, showToast }) {
             </div>
           ) : (
             <div className="fwd-field">
-              <label>Estudiantes por grupo (número par, ideal para parejas)</label>
+              <label>Estudiantes por grupo</label>
               <div className="stepper">
                 <button
-                  onClick={() => update((cc) => ({ ...cc, groupSize: Math.max(2, cc.groupSize - 2) }))}
+                  onClick={() => update((cc) => ({ ...cc, groupSize: Math.max(1, cc.groupSize - 1) }))}
                   aria-label="Menos estudiantes por grupo"
                 >
                   –
                 </button>
                 <input
                   type="number"
-                  step={2}
-                  min={2}
+                  step={1}
+                  min={1}
                   value={c.groupSize}
                   onChange={(e) => {
                     let v = parseInt(e.target.value, 10);
                     if (isNaN(v)) return;
-                    if (v < 2) v = 2;
-                    if (v % 2 !== 0) v += 1;
+                    if (v < 1) v = 1;
                     update((cc) => ({ ...cc, groupSize: v }));
                   }}
                 />
                 <button
-                  onClick={() => update((cc) => ({ ...cc, groupSize: cc.groupSize + 2 }))}
+                  onClick={() => update((cc) => ({ ...cc, groupSize: cc.groupSize + 1 }))}
                   aria-label="Más estudiantes por grupo"
                 >
                   +
